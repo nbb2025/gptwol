@@ -25,6 +25,7 @@ tcp_timeout = os.environ.get('TCP_TIMEOUT', 1)
 arp_interface = os.environ.get('ARP_INTERFACE')
 l2_wol_packet = os.environ.get('ENABLE_L2_WOL_PACKET', 'false').lower() == 'true'
 l2_interface = os.environ.get('L2_INTERFACE', 'eth0')
+api_password = os.environ.get('API_PASSWORD', '').strip()
 cron_filename = '/etc/cron.d/gptwol'
 computer_filename = 'db/computers.txt'
 
@@ -577,6 +578,57 @@ def arp_scan():
 
   except Exception as e:
     return jsonify({'message': str(e)}), 500
+
+@app.route('/api/wol', methods=['POST', 'GET'])
+def api_wol():
+  # Check if API password is configured
+  if not api_password:
+    logger.warning("API WOL request rejected: API_PASSWORD not configured")
+    return jsonify({'error': 'API not enabled. Set API_PASSWORD environment variable.'}), 403
+
+  # Get password from request (support both query param and header)
+  request_password = request.args.get('password') or request.headers.get('X-API-Password') or ''
+  if request.method == 'POST':
+    json_data = request.get_json(silent=True) or {}
+    request_password = request_password or json_data.get('password', '')
+
+  # Validate password
+  if request_password != api_password:
+    user_ip = request.remote_addr
+    logger.warning(f"API WOL request rejected: invalid password from IP: {user_ip}")
+    return jsonify({'error': 'Invalid password'}), 401
+
+  # Get MAC address from request
+  mac_address = request.args.get('mac')
+  if request.method == 'POST':
+    json_data = request.get_json(silent=True) or {}
+    mac_address = mac_address or json_data.get('mac', '')
+
+  if not mac_address:
+    return jsonify({'error': 'MAC address required. Use ?mac=XX:XX:XX:XX:XX:XX or JSON body {"mac": "XX:XX:XX:XX:XX:XX"}'}), 400
+
+  # Validate MAC address format
+  if check_invalid_mac(mac_address):
+    return jsonify({'error': f'Invalid MAC address format: {mac_address}'}), 400
+
+  # Send WOL packet
+  user_ip = request.remote_addr
+  try:
+    if l2_wol_packet:
+      send_l2_wol_packet(mac_address, l2_interface)
+      logger.info(f"API WOL L2 packet sent to {mac_address} from IP: {user_ip}")
+    else:
+      send_wol_packet(mac_address)
+      logger.info(f"API WOL L4 packet sent to {mac_address} from IP: {user_ip}")
+
+    return jsonify({
+      'success': True,
+      'message': f'Wake-on-LAN packet sent to {mac_address}',
+      'mode': 'L2' if l2_wol_packet else 'L4'
+    })
+  except Exception as e:
+    logger.error(f"API WOL failed for {mac_address}: {e}")
+    return jsonify({'error': str(e)}), 500
 
 with app.app_context():
   db.create_all()
