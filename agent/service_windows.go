@@ -30,7 +30,7 @@ func installService() error {
 	}
 
 	// Create service using sc.exe (binPath= must be together with value)
-	cmd := exec.Command("sc", "create", serviceName,
+	cmd := exec.Command("sc.exe", "create", serviceName,
 		fmt.Sprintf("binPath=%s", binPath),
 		"start=auto",
 		fmt.Sprintf("DisplayName=%s", "GPTWol Agent"),
@@ -42,11 +42,11 @@ func installService() error {
 	}
 
 	// Set description
-	cmd = exec.Command("sc", "description", serviceName, "GPTWol Sleep-on-LAN agent - listens for magic packets")
+	cmd = exec.Command("sc.exe", "description", serviceName, "GPTWol Sleep-on-LAN agent - listens for magic packets")
 	cmd.Run()
 
 	// Start service
-	cmd = exec.Command("sc", "start", serviceName)
+	cmd = exec.Command("sc.exe", "start", serviceName)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -64,11 +64,11 @@ func installService() error {
 
 func uninstallService() error {
 	// Stop service first
-	cmd := exec.Command("sc", "stop", serviceName)
+	cmd := exec.Command("sc.exe", "stop", serviceName)
 	cmd.Run() // Ignore error if not running
 
 	// Delete service
-	cmd = exec.Command("sc", "delete", serviceName)
+	cmd = exec.Command("sc.exe", "delete", serviceName)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
