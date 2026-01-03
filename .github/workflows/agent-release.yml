@@ -2,14 +2,11 @@ name: Build and Release Agent
 
 on:
   push:
-    tags:
-      - 'agent-v*'
+    branches:
+      - main
+    paths:
+      - 'agent/**'
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version tag (e.g., v1.0.0)'
-        required: true
-        default: 'v1.0.0'
 
 jobs:
   build:
@@ -21,12 +18,8 @@ jobs:
             goarch: amd64
           - goos: linux
             goarch: arm64
-          - goos: linux
-            goarch: arm
           - goos: windows
             goarch: amd64
-          - goos: windows
-            goarch: 386
           - goos: darwin
             goarch: amd64
           - goos: darwin
@@ -76,10 +69,38 @@ jobs:
       - name: List files
         run: ls -la dist/
 
+      - name: Delete existing release
+        uses: dev-drprasad/delete-tag-and-release@v1.1
+        with:
+          tag_name: agent-latest
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          delete_release: true
+        continue-on-error: true
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: agent-latest
+          name: Agent Latest Build
+          body: |
+            Latest gptwol-agent build from main branch.
+
+            ## Install
+
+            **Windows (PowerShell Admin):**
+            ```powershell
+            Invoke-WebRequest -Uri "https://github.com/${{ github.repository }}/releases/download/agent-latest/gptwol-agent-windows-amd64.exe" -OutFile "gptwol-agent.exe"
+            .\gptwol-agent.exe -install -action shutdown
+            ```
+
+            **Linux:**
+            ```bash
+            curl -LO https://github.com/${{ github.repository }}/releases/download/agent-latest/gptwol-agent-linux-amd64
+            chmod +x gptwol-agent-linux-amd64
+            sudo ./gptwol-agent-linux-amd64 -install -action shutdown
+            ```
           files: dist/*
-          generate_release_notes: true
+          prerelease: false
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

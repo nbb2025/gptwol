@@ -611,23 +611,41 @@ def api_wol():
   if check_invalid_mac(mac_address):
     return jsonify({'error': f'Invalid MAC address format: {mac_address}'}), 400
 
-  # Send WOL packet
+  # Get action from request (on=wake, off=sleep)
+  action = request.args.get('action', 'on').lower()
+  if request.method == 'POST':
+    json_data = request.get_json(silent=True) or {}
+    action = json_data.get('action', action).lower()
+
+  if action not in ['on', 'off']:
+    return jsonify({'error': 'Invalid action. Use action=on (wake) or action=off (sleep)'}), 400
+
+  # Determine target MAC (reversed for sleep-on-lan)
+  if action == 'off':
+    target_mac = ':'.join(reversed(mac_address.split(':')))
+    action_name = 'Sleep-on-LAN'
+  else:
+    target_mac = mac_address
+    action_name = 'Wake-on-LAN'
+
+  # Send packet
   user_ip = request.remote_addr
   try:
     if l2_wol_packet:
-      send_l2_wol_packet(mac_address, l2_interface)
-      logger.info(f"API WOL L2 packet sent to {mac_address} from IP: {user_ip}")
+      send_l2_wol_packet(target_mac, l2_interface)
+      logger.info(f"API {action_name} L2 packet sent to {mac_address} (target: {target_mac}) from IP: {user_ip}")
     else:
-      send_wol_packet(mac_address)
-      logger.info(f"API WOL L4 packet sent to {mac_address} from IP: {user_ip}")
+      send_wol_packet(target_mac)
+      logger.info(f"API {action_name} L4 packet sent to {mac_address} (target: {target_mac}) from IP: {user_ip}")
 
     return jsonify({
       'success': True,
-      'message': f'Wake-on-LAN packet sent to {mac_address}',
+      'message': f'{action_name} packet sent to {mac_address}',
+      'action': action,
       'mode': 'L2' if l2_wol_packet else 'L4'
     })
   except Exception as e:
-    logger.error(f"API WOL failed for {mac_address}: {e}")
+    logger.error(f"API {action_name} failed for {mac_address}: {e}")
     return jsonify({'error': str(e)}), 500
 
 with app.app_context():
