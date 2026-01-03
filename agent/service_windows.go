@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 )
 
-const serviceName = "gptwol-agent"
+const serviceName = "GPTWol-Agent"
 
 func installService() error {
 	exePath, err := os.Executable()
@@ -17,64 +17,68 @@ func installService() error {
 		return fmt.Errorf("failed to get executable path: %v", err)
 	}
 
-	// Get absolute path
 	exePath, err = filepath.Abs(exePath)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %v", err)
 	}
 
-	// Build binPath
-	binPath := fmt.Sprintf("\"%s\" -action \"%s\"", exePath, action)
+	// Build arguments
+	args := fmt.Sprintf("-action %s", action)
 	if macAddress != "" {
-		binPath = fmt.Sprintf("%s -mac \"%s\"", binPath, macAddress)
+		args = fmt.Sprintf("%s -mac %s", args, macAddress)
 	}
 
-	// Create service using sc.exe (binPath= must be together with value)
-	cmd := exec.Command("sc.exe", "create", serviceName,
-		fmt.Sprintf("binPath=%s", binPath),
-		"start=auto",
-		fmt.Sprintf("DisplayName=%s", "GPTWol Agent"),
+	// Remove existing task if exists
+	cmd := exec.Command("schtasks.exe", "/Delete", "/TN", serviceName, "/F")
+	cmd.Run() // Ignore error if not exists
+
+	// Create scheduled task that runs at startup
+	cmd = exec.Command("schtasks.exe", "/Create",
+		"/TN", serviceName,
+		"/TR", fmt.Sprintf("\"%s\" %s", exePath, args),
+		"/SC", "ONSTART",
+		"/RU", "SYSTEM",
+		"/RL", "HIGHEST",
+		"/F",
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to create service: %v", err)
+		return fmt.Errorf("failed to create scheduled task: %v", err)
 	}
 
-	// Set description
-	cmd = exec.Command("sc.exe", "description", serviceName, "GPTWol Sleep-on-LAN agent - listens for magic packets")
-	cmd.Run()
-
-	// Start service
-	cmd = exec.Command("sc.exe", "start", serviceName)
+	// Start the task immediately
+	cmd = exec.Command("schtasks.exe", "/Run", "/TN", serviceName)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		fmt.Printf("Warning: failed to start service: %v\n", err)
-		fmt.Println("You can start it manually: sc start gptwol-agent")
+		fmt.Printf("Warning: failed to start task: %v\n", err)
+		fmt.Println("It will start automatically on next boot.")
 	}
 
-	fmt.Printf("\nService installed successfully!\n")
+	fmt.Printf("\nScheduled task installed successfully!\n")
 	fmt.Printf("  Name: %s\n", serviceName)
 	fmt.Printf("  Action: %s\n", action)
-	fmt.Printf("  Status: sc query %s\n", serviceName)
+	fmt.Printf("  Binary: %s\n", exePath)
+	fmt.Printf("  Status: schtasks /Query /TN %s\n", serviceName)
+	fmt.Printf("  Check process: tasklist /FI \"IMAGENAME eq gptwol-agent.exe\"\n")
 
 	return nil
 }
 
 func uninstallService() error {
-	// Stop service first
-	cmd := exec.Command("sc.exe", "stop", serviceName)
+	// Kill running process
+	cmd := exec.Command("taskkill.exe", "/F", "/IM", "gptwol-agent.exe")
 	cmd.Run() // Ignore error if not running
 
-	// Delete service
-	cmd = exec.Command("sc.exe", "delete", serviceName)
+	// Delete scheduled task
+	cmd = exec.Command("schtasks.exe", "/Delete", "/TN", serviceName, "/F")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to delete service: %v", err)
+		return fmt.Errorf("failed to delete scheduled task: %v", err)
 	}
 
-	fmt.Println("Service uninstalled successfully!")
+	fmt.Println("Scheduled task uninstalled successfully!")
 	return nil
 }

@@ -109,7 +109,20 @@ jobs:
             | `-action sleep` | Sleep on SOL packet |
             | `-action hibernate` | Hibernate on SOL packet |
             | `-list-macs` | List local MAC addresses |
-            | `-uninstall` | Uninstall service |
+            | `-uninstall` | Uninstall scheduled task/service |
+
+            ## Check Status
+
+            **Windows:**
+            ```powershell
+            schtasks /Query /TN GPTWol-Agent
+            tasklist /FI "IMAGENAME eq gptwol-agent.exe"
+            ```
+
+            **Linux:**
+            ```bash
+            systemctl status gptwol-agent
+            ```
           files: dist/*
           prerelease: false
           make_latest: true
