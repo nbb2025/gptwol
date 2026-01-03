@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	serviceName  = "com.gptwol.agent"
-	plistFile    = "/Library/LaunchDaemons/com.gptwol.agent.plist"
-	installPath  = "/usr/local/bin/gptwol-agent"
+	serviceName = "com.gptwol.agent"
+	plistFile   = "/Library/LaunchDaemons/com.gptwol.agent.plist"
+	installPath = "/usr/local/bin/gptwol-agent"
 )
 
 func installService() error {
@@ -24,10 +24,6 @@ func installService() error {
 	exePath, err = filepath.Abs(exePath)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %v", err)
-	}
-
-	if password == "" {
-		return fmt.Errorf("password required for installation: use -password flag")
 	}
 
 	// Copy binary to /usr/local/bin
@@ -42,6 +38,17 @@ func installService() error {
 		fmt.Printf("Binary copied to %s\n", installPath)
 	}
 
+	// Build program arguments
+	programArgs := fmt.Sprintf(`        <string>%s</string>
+        <string>-action</string>
+        <string>%s</string>`, installPath, action)
+
+	if macAddress != "" {
+		programArgs += fmt.Sprintf(`
+        <string>-mac</string>
+        <string>%s</string>`, macAddress)
+	}
+
 	// Create launchd plist
 	plistContent := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -51,11 +58,7 @@ func installService() error {
     <string>%s</string>
     <key>ProgramArguments</key>
     <array>
-        <string>%s</string>
-        <string>-password</string>
-        <string>%s</string>
-        <string>-port</string>
-        <string>%s</string>
+%s
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -67,7 +70,7 @@ func installService() error {
     <string>/var/log/gptwol-agent.log</string>
 </dict>
 </plist>
-`, serviceName, installPath, password, port)
+`, serviceName, programArgs)
 
 	if err := os.WriteFile(plistFile, []byte(plistContent), 0644); err != nil {
 		return fmt.Errorf("failed to write plist file: %v", err)
@@ -83,7 +86,7 @@ func installService() error {
 
 	fmt.Printf("\nService installed successfully!\n")
 	fmt.Printf("  Name: %s\n", serviceName)
-	fmt.Printf("  Port: %s\n", port)
+	fmt.Printf("  Action: %s\n", action)
 	fmt.Printf("  Binary: %s\n", installPath)
 	fmt.Printf("  Plist: %s\n", plistFile)
 	fmt.Printf("  Status: launchctl list | grep gptwol\n")

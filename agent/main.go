@@ -1,174 +1,174 @@
 package main
 
 import (
-	"encoding/json"
+	"bytes"
 	"flag"
 	"fmt"
 	"log"
-	"net/http"
+	"net"
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 )
 
 var (
-	version  = "1.0.0"
-	password string
-	port     string
+	version    = "1.0.0"
+	macAddress string
+	action     string
 )
 
-type Response struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-	Action  string `json:"action,omitempty"`
+// Magic Packet: 6 bytes of 0xFF followed by 16 repetitions of target MAC
+const magicPacketSize = 102
+
+func getMACAddresses() ([]string, error) {
+	var macs []string
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, iface := range interfaces {
+		// Skip loopback and interfaces without MAC
+		if iface.Flags&net.FlagLoopback != 0 || len(iface.HardwareAddr) == 0 {
+			continue
+		}
+		macs = append(macs, strings.ToLower(iface.HardwareAddr.String()))
+	}
+	return macs, nil
 }
 
-func jsonResponse(w http.ResponseWriter, status int, resp Response) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(resp)
+func reverseMac(mac string) string {
+	parts := strings.Split(mac, ":")
+	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+		parts[i], parts[j] = parts[j], parts[i]
+	}
+	return strings.Join(parts, ":")
 }
 
-func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		reqPassword := r.URL.Query().Get("password")
-		if reqPassword == "" {
-			reqPassword = r.Header.Get("X-API-Password")
-		}
+func parseMagicPacket(data []byte) (string, bool) {
+	if len(data) < magicPacketSize {
+		return "", false
+	}
 
-		if reqPassword != password {
-			log.Printf("[WARN] Unauthorized request from %s", r.RemoteAddr)
-			jsonResponse(w, http.StatusUnauthorized, Response{
-				Success: false,
-				Message: "Invalid password",
-			})
-			return
+	// Check for 6 bytes of 0xFF
+	for i := 0; i < 6; i++ {
+		if data[i] != 0xFF {
+			return "", false
 		}
-		next(w, r)
+	}
+
+	// Extract MAC address (bytes 6-11)
+	mac := data[6:12]
+
+	// Verify 16 repetitions of MAC
+	for i := 0; i < 16; i++ {
+		offset := 6 + (i * 6)
+		if !bytes.Equal(data[offset:offset+6], mac) {
+			return "", false
+		}
+	}
+
+	// Format MAC address
+	macStr := fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x",
+		mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
+
+	return macStr, true
+}
+
+func executeAction(action string) {
+	log.Printf("[INFO] Executing action: %s", action)
+
+	time.Sleep(2 * time.Second)
+
+	var cmd *exec.Cmd
+	switch action {
+	case "shutdown":
+		if runtime.GOOS == "windows" {
+			cmd = exec.Command("shutdown", "/s", "/t", "5")
+		} else {
+			cmd = exec.Command("shutdown", "-h", "now")
+		}
+	case "reboot":
+		if runtime.GOOS == "windows" {
+			cmd = exec.Command("shutdown", "/r", "/t", "5")
+		} else {
+			cmd = exec.Command("shutdown", "-r", "now")
+		}
+	case "sleep":
+		if runtime.GOOS == "windows" {
+			cmd = exec.Command("rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0")
+		} else {
+			cmd = exec.Command("systemctl", "suspend")
+		}
+	case "hibernate":
+		if runtime.GOOS == "windows" {
+			cmd = exec.Command("shutdown", "/h")
+		} else {
+			cmd = exec.Command("systemctl", "hibernate")
+		}
+	default:
+		log.Printf("[ERROR] Unknown action: %s", action)
+		return
+	}
+
+	if err := cmd.Run(); err != nil {
+		log.Printf("[ERROR] Action failed: %v", err)
 	}
 }
 
-func executeCommand(action string, args ...string) error {
-	cmd := exec.Command(args[0], args[1:]...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Start()
-}
+func listenUDP(port int, targetMACs map[string]bool, reversedMACs map[string]bool) {
+	addr := net.UDPAddr{
+		Port: port,
+		IP:   net.IPv4zero,
+	}
 
-func shutdownHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[INFO] Shutdown request from %s", r.RemoteAddr)
+	conn, err := net.ListenUDP("udp", &addr)
+	if err != nil {
+		log.Fatalf("[ERROR] Failed to listen on UDP port %d: %v", port, err)
+	}
+	defer conn.Close()
 
-	jsonResponse(w, http.StatusOK, Response{
-		Success: true,
-		Message: "Shutdown initiated",
-		Action:  "shutdown",
-	})
+	log.Printf("[INFO] Listening for Magic Packets on UDP port %d", port)
 
-	go func() {
-		time.Sleep(1 * time.Second)
-		var err error
-		if runtime.GOOS == "windows" {
-			err = executeCommand("shutdown", "shutdown", "/s", "/t", "5")
-		} else {
-			err = executeCommand("shutdown", "shutdown", "-h", "now")
-		}
+	buf := make([]byte, 1024)
+	for {
+		n, remoteAddr, err := conn.ReadFromUDP(buf)
 		if err != nil {
-			log.Printf("[ERROR] Shutdown failed: %v", err)
+			log.Printf("[ERROR] Read error: %v", err)
+			continue
 		}
-	}()
-}
 
-func rebootHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[INFO] Reboot request from %s", r.RemoteAddr)
-
-	jsonResponse(w, http.StatusOK, Response{
-		Success: true,
-		Message: "Reboot initiated",
-		Action:  "reboot",
-	})
-
-	go func() {
-		time.Sleep(1 * time.Second)
-		var err error
-		if runtime.GOOS == "windows" {
-			err = executeCommand("reboot", "shutdown", "/r", "/t", "5")
-		} else {
-			err = executeCommand("reboot", "shutdown", "-r", "now")
+		mac, valid := parseMagicPacket(buf[:n])
+		if !valid {
+			continue
 		}
-		if err != nil {
-			log.Printf("[ERROR] Reboot failed: %v", err)
+
+		mac = strings.ToLower(mac)
+		log.Printf("[INFO] Received Magic Packet for MAC %s from %s", mac, remoteAddr)
+
+		// Check if it's a reversed MAC (Sleep-on-LAN signal)
+		if reversedMACs[mac] {
+			log.Printf("[INFO] Sleep-on-LAN packet detected! Executing: %s", action)
+			go executeAction(action)
+		} else if targetMACs[mac] {
+			log.Printf("[INFO] Wake-on-LAN packet for this machine (ignored - already awake)")
 		}
-	}()
-}
-
-func sleepHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[INFO] Sleep request from %s", r.RemoteAddr)
-
-	jsonResponse(w, http.StatusOK, Response{
-		Success: true,
-		Message: "Sleep initiated",
-		Action:  "sleep",
-	})
-
-	go func() {
-		time.Sleep(1 * time.Second)
-		var err error
-		if runtime.GOOS == "windows" {
-			// Windows sleep using rundll32
-			err = executeCommand("sleep", "rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0")
-		} else {
-			// Linux sleep using systemctl
-			err = executeCommand("sleep", "systemctl", "suspend")
-		}
-		if err != nil {
-			log.Printf("[ERROR] Sleep failed: %v", err)
-		}
-	}()
-}
-
-func hibernateHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[INFO] Hibernate request from %s", r.RemoteAddr)
-
-	jsonResponse(w, http.StatusOK, Response{
-		Success: true,
-		Message: "Hibernate initiated",
-		Action:  "hibernate",
-	})
-
-	go func() {
-		time.Sleep(1 * time.Second)
-		var err error
-		if runtime.GOOS == "windows" {
-			err = executeCommand("hibernate", "shutdown", "/h")
-		} else {
-			err = executeCommand("hibernate", "systemctl", "hibernate")
-		}
-		if err != nil {
-			log.Printf("[ERROR] Hibernate failed: %v", err)
-		}
-	}()
-}
-
-func statusHandler(w http.ResponseWriter, r *http.Request) {
-	jsonResponse(w, http.StatusOK, Response{
-		Success: true,
-		Message: fmt.Sprintf("gptwol-agent %s running on %s/%s", version, runtime.GOOS, runtime.GOARCH),
-	})
-}
-
-func healthHandler(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
+	}
 }
 
 func main() {
 	var showVersion bool
 	var install bool
 	var uninstall bool
+	var port int
+	var listMACs bool
 
-	flag.StringVar(&password, "password", "", "API password (required, or set AGENT_PASSWORD env)")
-	flag.StringVar(&port, "port", "9009", "Listen port (default: 9009)")
+	flag.StringVar(&macAddress, "mac", "", "MAC address to monitor (auto-detect if empty)")
+	flag.StringVar(&action, "action", "shutdown", "Action on SOL packet: shutdown, reboot, sleep, hibernate")
+	flag.IntVar(&port, "port", 9, "UDP port to listen on (default: 9)")
+	flag.BoolVar(&listMACs, "list-macs", false, "List all MAC addresses and exit")
 	flag.BoolVar(&showVersion, "version", false, "Show version")
 	flag.BoolVar(&install, "install", false, "Install as system service")
 	flag.BoolVar(&uninstall, "uninstall", false, "Uninstall system service")
@@ -176,6 +176,18 @@ func main() {
 
 	if showVersion {
 		fmt.Printf("gptwol-agent %s (%s/%s)\n", version, runtime.GOOS, runtime.GOARCH)
+		os.Exit(0)
+	}
+
+	if listMACs {
+		macs, err := getMACAddresses()
+		if err != nil {
+			log.Fatalf("Failed to get MAC addresses: %v", err)
+		}
+		fmt.Println("Available MAC addresses:")
+		for _, mac := range macs {
+			fmt.Printf("  %s (reversed: %s)\n", mac, reverseMac(mac))
+		}
 		os.Exit(0)
 	}
 
@@ -195,32 +207,46 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Get password from env if not provided
-	if password == "" {
-		password = os.Getenv("AGENT_PASSWORD")
-	}
-	if password == "" {
-		log.Fatal("Password required: use -password flag or set AGENT_PASSWORD environment variable")
+	// Get MAC addresses to monitor
+	var macs []string
+	if macAddress != "" {
+		macs = []string{strings.ToLower(macAddress)}
+	} else {
+		var err error
+		macs, err = getMACAddresses()
+		if err != nil {
+			log.Fatalf("Failed to get MAC addresses: %v", err)
+		}
 	}
 
-	// Get port from env if not provided via flag
-	if envPort := os.Getenv("AGENT_PORT"); envPort != "" && port == "9009" {
-		port = envPort
+	if len(macs) == 0 {
+		log.Fatal("No MAC addresses found")
 	}
 
-	// Setup routes
-	http.HandleFunc("/health", healthHandler)
-	http.HandleFunc("/status", authMiddleware(statusHandler))
-	http.HandleFunc("/shutdown", authMiddleware(shutdownHandler))
-	http.HandleFunc("/reboot", authMiddleware(rebootHandler))
-	http.HandleFunc("/sleep", authMiddleware(sleepHandler))
-	http.HandleFunc("/hibernate", authMiddleware(hibernateHandler))
+	// Build lookup maps
+	targetMACs := make(map[string]bool)
+	reversedMACs := make(map[string]bool)
 
-	addr := fmt.Sprintf(":%s", port)
-	log.Printf("[INFO] gptwol-agent %s starting on %s", version, addr)
+	for _, mac := range macs {
+		targetMACs[mac] = true
+		reversed := reverseMac(mac)
+		reversedMACs[reversed] = true
+		log.Printf("[INFO] Monitoring MAC: %s (SOL trigger: %s)", mac, reversed)
+	}
+
+	log.Printf("[INFO] gptwol-agent %s starting", version)
 	log.Printf("[INFO] Platform: %s/%s", runtime.GOOS, runtime.GOARCH)
+	log.Printf("[INFO] Action on SOL: %s", action)
 
-	if err := http.ListenAndServe(addr, nil); err != nil {
-		log.Fatalf("Server failed: %v", err)
+	// Listen on both common WOL ports
+	go listenUDP(7, targetMACs, reversedMACs)
+	go listenUDP(9, targetMACs, reversedMACs)
+
+	// Also listen on custom port if different
+	if port != 7 && port != 9 {
+		go listenUDP(port, targetMACs, reversedMACs)
 	}
+
+	// Keep main goroutine alive
+	select {}
 }

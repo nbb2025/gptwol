@@ -1,12 +1,12 @@
 # GPTWol Agent - One-click install script for Windows
 # Run in PowerShell as Administrator:
-# irm https://raw.githubusercontent.com/nbb2025/gptwol/main/agent/install.ps1 | iex
+# irm https://raw.githubusercontent.com/nbb2025/gptwol/main/agent/install.ps1 -OutFile install.ps1; .\install.ps1 -Action shutdown
 
 param(
-    [Parameter(Mandatory=$true)]
-    [string]$Password,
+    [ValidateSet("shutdown", "reboot", "sleep", "hibernate")]
+    [string]$Action = "shutdown",
 
-    [string]$Port = "9009"
+    [string]$Mac = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -58,17 +58,27 @@ if ($service) {
 
 # Install service
 Write-Info "Installing as Windows service..."
-& $binaryPath -install -password $Password -port $Port
+$installArgs = @("-install", "-action", $Action)
+if ($Mac) {
+    $installArgs += @("-mac", $Mac)
+}
+& $binaryPath @installArgs
 
 Write-Info "Installation complete!"
 Write-Host ""
 Write-Host "  Service: gptwol-agent"
-Write-Host "  Port: ${Port}"
+Write-Host "  Action: ${Action}"
+Write-Host "  Listening on: UDP ports 7, 9"
 Write-Host "  Binary: ${binaryPath}"
 Write-Host "  Status: sc query gptwol-agent"
 Write-Host ""
-Write-Host "  Test: curl http://localhost:${Port}/health"
-Write-Host "  Shutdown: curl `"http://localhost:${Port}/shutdown?password=YOUR_PASSWORD`""
+Write-Host "  To trigger ${Action}, send a Sleep-on-LAN packet (reversed MAC)"
+Write-Host "  from your gptwol server."
+
+# Add firewall rule for UDP ports
+Write-Info "Adding firewall rules..."
+New-NetFirewallRule -DisplayName "GPTWol Agent UDP 7" -Direction Inbound -Protocol UDP -LocalPort 7 -Action Allow -ErrorAction SilentlyContinue | Out-Null
+New-NetFirewallRule -DisplayName "GPTWol Agent UDP 9" -Direction Inbound -Protocol UDP -LocalPort 9 -Action Allow -ErrorAction SilentlyContinue | Out-Null
 
 # Add to PATH
 $currentPath = [Environment]::GetEnvironmentVariable("Path", "Machine")

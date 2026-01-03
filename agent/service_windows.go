@@ -23,12 +23,11 @@ func installService() error {
 		return fmt.Errorf("failed to get absolute path: %v", err)
 	}
 
-	if password == "" {
-		return fmt.Errorf("password required for installation: use -password flag")
-	}
-
 	// Create service using sc.exe
-	binPath := fmt.Sprintf("\"%s\" -password \"%s\" -port \"%s\"", exePath, password, port)
+	binPath := fmt.Sprintf("\"%s\" -action \"%s\"", exePath, action)
+	if macAddress != "" {
+		binPath = fmt.Sprintf("%s -mac \"%s\"", binPath, macAddress)
+	}
 
 	cmd := exec.Command("sc", "create", serviceName,
 		"binPath=", binPath,
@@ -42,7 +41,7 @@ func installService() error {
 	}
 
 	// Set description
-	cmd = exec.Command("sc", "description", serviceName, "GPTWol remote shutdown/reboot agent")
+	cmd = exec.Command("sc", "description", serviceName, "GPTWol Sleep-on-LAN agent - listens for magic packets")
 	cmd.Run()
 
 	// Start service
@@ -56,7 +55,7 @@ func installService() error {
 
 	fmt.Printf("\nService installed successfully!\n")
 	fmt.Printf("  Name: %s\n", serviceName)
-	fmt.Printf("  Port: %s\n", port)
+	fmt.Printf("  Action: %s\n", action)
 	fmt.Printf("  Status: sc query %s\n", serviceName)
 
 	return nil

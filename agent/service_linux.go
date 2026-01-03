@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	serviceName    = "gptwol-agent"
-	serviceFile    = "/etc/systemd/system/gptwol-agent.service"
-	installPath    = "/usr/local/bin/gptwol-agent"
+	serviceName = "gptwol-agent"
+	serviceFile = "/etc/systemd/system/gptwol-agent.service"
+	installPath = "/usr/local/bin/gptwol-agent"
 )
 
 func installService() error {
@@ -24,10 +24,6 @@ func installService() error {
 	exePath, err = filepath.Abs(exePath)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %v", err)
-	}
-
-	if password == "" {
-		return fmt.Errorf("password required for installation: use -password flag")
 	}
 
 	// Copy binary to /usr/local/bin
@@ -42,22 +38,30 @@ func installService() error {
 		fmt.Printf("Binary copied to %s\n", installPath)
 	}
 
+	// Build ExecStart command
+	execStart := fmt.Sprintf("%s -action %s", installPath, action)
+	if macAddress != "" {
+		execStart = fmt.Sprintf("%s -mac %s", execStart, macAddress)
+	}
+
 	// Create systemd service file
 	serviceContent := fmt.Sprintf(`[Unit]
-Description=GPTWol Agent - Remote shutdown/reboot service
+Description=GPTWol Agent - Sleep-on-LAN listener
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=%s -password "%s" -port "%s"
+ExecStart=%s
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
+# Required for listening on privileged ports (7, 9)
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target
-`, installPath, password, port)
+`, execStart)
 
 	if err := os.WriteFile(serviceFile, []byte(serviceContent), 0644); err != nil {
 		return fmt.Errorf("failed to write service file: %v", err)
@@ -88,7 +92,7 @@ WantedBy=multi-user.target
 
 	fmt.Printf("\nService installed successfully!\n")
 	fmt.Printf("  Name: %s\n", serviceName)
-	fmt.Printf("  Port: %s\n", port)
+	fmt.Printf("  Action: %s\n", action)
 	fmt.Printf("  Binary: %s\n", installPath)
 	fmt.Printf("  Service: %s\n", serviceFile)
 	fmt.Printf("  Status: systemctl status %s\n", serviceName)
