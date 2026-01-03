@@ -87,7 +87,7 @@ jobs:
 
             ## Install
 
-            **Windows (PowerShell Admin):**
+            **Windows (PowerShell 以管理员身份运行):**
             ```powershell
             Invoke-WebRequest -Uri "https://github.com/${{ github.repository }}/releases/download/agent-latest/gptwol-agent-windows-amd64.exe" -OutFile "gptwol-agent.exe"
             .\gptwol-agent.exe -install -action shutdown
@@ -99,6 +99,17 @@ jobs:
             chmod +x gptwol-agent-linux-amd64
             sudo ./gptwol-agent-linux-amd64 -install -action shutdown
             ```
+
+            ## Options
+
+            | Parameter | Description |
+            |-----------|-------------|
+            | `-action shutdown` | Shutdown on SOL packet (default) |
+            | `-action reboot` | Reboot on SOL packet |
+            | `-action sleep` | Sleep on SOL packet |
+            | `-action hibernate` | Hibernate on SOL packet |
+            | `-list-macs` | List local MAC addresses |
+            | `-uninstall` | Uninstall service |
           files: dist/*
           prerelease: false
           make_latest: true

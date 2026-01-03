@@ -23,16 +23,17 @@ func installService() error {
 		return fmt.Errorf("failed to get absolute path: %v", err)
 	}
 
-	// Create service using sc.exe
+	// Build binPath
 	binPath := fmt.Sprintf("\"%s\" -action \"%s\"", exePath, action)
 	if macAddress != "" {
 		binPath = fmt.Sprintf("%s -mac \"%s\"", binPath, macAddress)
 	}
 
+	// Create service using sc.exe (binPath= must be together with value)
 	cmd := exec.Command("sc", "create", serviceName,
-		"binPath=", binPath,
-		"start=", "auto",
-		"DisplayName=", "GPTWol Agent",
+		fmt.Sprintf("binPath=%s", binPath),
+		"start=auto",
+		fmt.Sprintf("DisplayName=%s", "GPTWol Agent"),
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
